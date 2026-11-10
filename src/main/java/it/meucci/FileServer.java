@@ -23,7 +23,7 @@ public class FileServer {
         System.out.println("In ascolto sulla porta " + PORT + "...");
 
         // Thread pool per gestire più client concorrenti (Multiclient)
-        ExecutorService pool = Executors.newCachedThreadPool();
+        ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
 
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
             while (true) {
