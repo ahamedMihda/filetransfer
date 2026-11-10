@@ -9,7 +9,7 @@ import java.util.concurrent.Executors;
 
 public class FileServer {
     private static final int PORT = 3000;
-    private static final String DOCS_DIR = "documenti";
+    private static final String DOCS_DIR = "src/main/java/it/meucci/documenti";
 
     public static void main(String[] args) {
         // Creazione automatica della cartella documenti se non esiste
