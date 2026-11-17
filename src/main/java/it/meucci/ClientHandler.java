@@ -37,19 +37,19 @@ public class ClientHandler implements Runnable {
             }
 
             if (request.trim().isEmpty()) {
-                sendError(writer, "ERR SYNTAX");
+                sendError(writer, 400, "Bad Request", "Richiesta vuota.\n");
                 return;
             }
 
             String[] tokens = request.trim().split("\\s+");
 
             if (!tokens[0].equals("LEGGI")) {
-                sendError(writer, "ERR UNKNOWNCMD");
+                sendError(writer, 501, "Not Implemented", "Comando \"" + tokens[0] + "\" non supportato.\n");
                 return;
             }
 
             if (tokens.length != 2 || !isValidBaseName(tokens[1])) {
-                sendError(writer, "ERR SYNTAX");
+                sendError(writer, 400, "Bad Request", "Sintassi non valida o nome file non ammesso.\n");
                 return;
             }
 
@@ -67,27 +67,17 @@ public class ClientHandler implements Runnable {
             }
 
             if (foundFile == null) {
-                sendError(writer, "ERR NOTFOUND");
+                sendError(writer, 404, "Not Found", "Il file \"" + baseName + "\" non esiste.\n");
                 return;
             }
 
             try {
-                // Legge l'intero file in byte prima di inviare qualsiasi risposta
                 byte[] dati = Files.readAllBytes(foundFile.toPath());
-                String contenuto = new String(dati, StandardCharsets.UTF_8);
-
-                writer.println("OK FILE");
-                writer.println("Content-Type: " + foundMimeType);
-                writer.println("Content-Length: " + dati.length); // Lunghezza esatta in byte
-                writer.println();
-                writer.print(contenuto);
-                writer.flush(); // Obbligatorio dopo print() per svuotare il buffer prima di chiudere il socket
-
-                System.out.println("File inviato a " + socket.getRemoteSocketAddress() + ": " + foundFile.getName() + " (" + dati.length + " byte)");
+                sendResponse(writer, 200, "OK", foundMimeType, dati);
+                System.out.println("200 OK - Inviato a " + socket.getRemoteSocketAddress() + ": " + foundFile.getName());
 
             } catch (IOException e) {
-                // Se fallisce la lettura non abbiamo ancora inviato OK FILE, quindi possiamo inviare ERR READ
-                sendError(writer, "ERR READ");
+                sendError(writer, 500, "Internal Server Error", "Errore interno durante la lettura del file.\n");
                 System.err.println("Errore durante la lettura di " + foundFile.getName() + ": " + e.getMessage());
             }
 
@@ -108,8 +98,21 @@ public class ClientHandler implements Runnable {
         return !name.contains(".") && !name.contains("/") && !name.contains("\\");
     }
 
-    private void sendError(PrintWriter writer, String errorCode) {
-        writer.println(errorCode);
+    // Metodo di supporto per inviare risposte di errore in formato text/plain
+    private void sendError(PrintWriter writer, int statusCode, String statusText, String message) {
+        byte[] bodyBytes = message.getBytes(StandardCharsets.UTF_8);
+        sendResponse(writer, statusCode, statusText, "text/plain; charset=utf-8", bodyBytes);
+    }
+
+    // Metodo unico per inviare qualsiasi risposta (successo o errore)
+    private void sendResponse(PrintWriter writer, int statusCode, String statusText, String contentType, byte[] bodyBytes) {
+        String body = new String(bodyBytes, StandardCharsets.UTF_8);
+
+        writer.println(statusCode + " " + statusText);
+        writer.println("Content-Type: " + contentType);
+        writer.println("Content-Length: " + bodyBytes.length);
         writer.println();
+        writer.print(body);
+        writer.flush();
     }
 }
