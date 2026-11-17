@@ -3,13 +3,18 @@ package it.meucci;
 import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 public class ClientHandler implements Runnable {
-    // LinkedHashSet mantiene l'ordine di inserimento: txt -> md -> csv
-    private static final Set<String> EXTENSIONS = new LinkedHashSet<>(List.of("txt", "md", "csv"));
+    // Mappa ordinata: associa ogni estensione ammessa al suo tipo MIME standard
+    private static final Map<String, String> MIME_TYPES = new LinkedHashMap<>();
+
+    static {
+        MIME_TYPES.put("txt", "text/plain; charset=utf-8");
+        MIME_TYPES.put("md", "text/markdown; charset=utf-8");
+        MIME_TYPES.put("csv", "text/csv; charset=utf-8");
+    }
 
     private final Socket socket;
     private final String docsDir;
@@ -50,14 +55,14 @@ public class ClientHandler implements Runnable {
 
             String baseName = tokens[1];
             File foundFile = null;
-            String foundExt = null;
+            String foundMimeType = null;
 
-            // L'iterazione su LinkedHashSet rispetta esattamente l'ordine txt, md, csv
-            for (String ext : EXTENSIONS) {
-                File candidate = new File(docsDir, baseName + "." + ext);
+            // Cerca il file seguendo l'ordine di inserimento nella LinkedHashMap
+            for (Map.Entry<String, String> entry : MIME_TYPES.entrySet()) {
+                File candidate = new File(docsDir, baseName + "." + entry.getKey());
                 if (candidate.isFile()) {
                     foundFile = candidate;
-                    foundExt = ext;
+                    foundMimeType = entry.getValue();
                     break;
                 }
             }
@@ -72,7 +77,8 @@ public class ClientHandler implements Runnable {
                     new InputStreamReader(new FileInputStream(foundFile), StandardCharsets.UTF_8))) {
 
                 writer.println("OK FILE");
-                writer.println("TYPE " + foundExt);
+                // Nuovo formato standard della Tappa 3: "Nome: valore"
+                writer.println("Content-Type: " + foundMimeType);
                 writer.println();
                 headerSent = true;
 
