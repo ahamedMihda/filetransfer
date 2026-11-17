@@ -8,6 +8,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class ClientHandler implements Runnable {
+    private static final String PROTOCOL_PREFIX = "ARCH/";
+    private static final String PROTOCOL_VERSION = "ARCH/1.0";
     private static final Map<String, String> MIME_TYPES = new LinkedHashMap<>();
 
     static {
@@ -43,17 +45,48 @@ public class ClientHandler implements Runnable {
 
             String[] tokens = request.trim().split("\\s+");
 
-            if (!tokens[0].equals("LEGGI")) {
-                sendError(writer, 501, "Not Implemented", "Comando \"" + tokens[0] + "\" non supportato.\n");
+            // 1. Controllo numero di parti (deve essere esattamente 3: COMANDO /risorsa VERSIONE)
+            if (tokens.length != 3) {
+                sendError(writer, 400, "Bad Request", "La richiesta deve avere tre parti: COMANDO /risorsa ARCH/1.0\n");
                 return;
             }
 
-            if (tokens.length != 2 || !isValidBaseName(tokens[1])) {
-                sendError(writer, 400, "Bad Request", "Sintassi non valida o nome file non ammesso.\n");
+            String command = tokens[0];
+            String resource = tokens[1];
+            String version = tokens[2];
+
+            // 2. Controllo risorsa che inizia con '/'
+            if (!resource.startsWith("/")) {
+                sendError(writer, 400, "Bad Request", "La risorsa deve iniziare con '/'.\n");
                 return;
             }
 
-            String baseName = tokens[1];
+            // 3. Controllo formato versione ('ARCH/...')
+            if (!version.startsWith(PROTOCOL_PREFIX)) {
+                sendError(writer, 400, "Bad Request", "Versione del protocollo non valida.\n");
+                return;
+            }
+
+            // 4. Controllo versione supportata ('ARCH/1.0')
+            if (!version.equals(PROTOCOL_VERSION)) {
+                sendError(writer, 505, "Version Not Supported", "Versione non supportata. Usare ARCH/1.0.\n");
+                return;
+            }
+
+            // 5. Controllo comando supportato ('LEGGI')
+            if (!command.equals("LEGGI")) {
+                sendError(writer, 501, "Not Implemented", "Comando \"" + command + "\" non supportato.\n");
+                return;
+            }
+
+            // Rimuove lo '/' iniziale per ottenere il nome base del file
+            String baseName = resource.substring(1);
+
+            if (!isValidBaseName(baseName)) {
+                sendError(writer, 400, "Bad Request", "Nome della risorsa non valido.\n");
+                return;
+            }
+
             File foundFile = null;
             String foundMimeType = null;
 
@@ -67,7 +100,7 @@ public class ClientHandler implements Runnable {
             }
 
             if (foundFile == null) {
-                sendError(writer, 404, "Not Found", "Il file \"" + baseName + "\" non esiste.\n");
+                sendError(writer, 404, "Not Found", "La risorsa \"" + resource + "\" non esiste.\n");
                 return;
             }
 
@@ -98,17 +131,16 @@ public class ClientHandler implements Runnable {
         return !name.contains(".") && !name.contains("/") && !name.contains("\\");
     }
 
-    // Metodo di supporto per inviare risposte di errore in formato text/plain
     private void sendError(PrintWriter writer, int statusCode, String statusText, String message) {
         byte[] bodyBytes = message.getBytes(StandardCharsets.UTF_8);
         sendResponse(writer, statusCode, statusText, "text/plain; charset=utf-8", bodyBytes);
     }
 
-    // Metodo unico per inviare qualsiasi risposta (successo o errore)
     private void sendResponse(PrintWriter writer, int statusCode, String statusText, String contentType, byte[] bodyBytes) {
         String body = new String(bodyBytes, StandardCharsets.UTF_8);
 
-        writer.println(statusCode + " " + statusText);
+        // Anche la riga di stato ora inizia con ARCH/1.0
+        writer.println(PROTOCOL_VERSION + " " + statusCode + " " + statusText);
         writer.println("Content-Type: " + contentType);
         writer.println("Content-Length: " + bodyBytes.length);
         writer.println();
