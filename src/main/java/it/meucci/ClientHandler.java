@@ -3,11 +3,11 @@ package it.meucci;
 import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class ClientHandler implements Runnable {
-    // Mappa ordinata: associa ogni estensione ammessa al suo tipo MIME standard
     private static final Map<String, String> MIME_TYPES = new LinkedHashMap<>();
 
     static {
@@ -57,7 +57,6 @@ public class ClientHandler implements Runnable {
             File foundFile = null;
             String foundMimeType = null;
 
-            // Cerca il file seguendo l'ordine di inserimento nella LinkedHashMap
             for (Map.Entry<String, String> entry : MIME_TYPES.entrySet()) {
                 File candidate = new File(docsDir, baseName + "." + entry.getKey());
                 if (candidate.isFile()) {
@@ -72,28 +71,24 @@ public class ClientHandler implements Runnable {
                 return;
             }
 
-            boolean headerSent = false;
-            try (BufferedReader fileReader = new BufferedReader(
-                    new InputStreamReader(new FileInputStream(foundFile), StandardCharsets.UTF_8))) {
+            try {
+                // Legge l'intero file in byte prima di inviare qualsiasi risposta
+                byte[] dati = Files.readAllBytes(foundFile.toPath());
+                String contenuto = new String(dati, StandardCharsets.UTF_8);
 
                 writer.println("OK FILE");
-                // Nuovo formato standard della Tappa 3: "Nome: valore"
                 writer.println("Content-Type: " + foundMimeType);
+                writer.println("Content-Length: " + dati.length); // Lunghezza esatta in byte
                 writer.println();
-                headerSent = true;
+                writer.print(contenuto);
+                writer.flush(); // Obbligatorio dopo print() per svuotare il buffer prima di chiudere il socket
 
-                String line;
-                while ((line = fileReader.readLine()) != null) {
-                    writer.println(line);
-                }
-                System.out.println("File inviato a " + socket.getRemoteSocketAddress() + ": " + foundFile.getName());
+                System.out.println("File inviato a " + socket.getRemoteSocketAddress() + ": " + foundFile.getName() + " (" + dati.length + " byte)");
 
             } catch (IOException e) {
-                if (!headerSent) {
-                    sendError(writer, "ERR READ");
-                } else {
-                    System.err.println("Errore durante la lettura di " + foundFile.getName() + ": " + e.getMessage());
-                }
+                // Se fallisce la lettura non abbiamo ancora inviato OK FILE, quindi possiamo inviare ERR READ
+                sendError(writer, "ERR READ");
+                System.err.println("Errore durante la lettura di " + foundFile.getName() + ": " + e.getMessage());
             }
 
         } catch (IOException e) {
