@@ -3,8 +3,14 @@ package it.meucci;
 import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
 public class ClientHandler implements Runnable {
+    // LinkedHashSet mantiene l'ordine di inserimento: txt -> md -> csv
+    private static final Set<String> EXTENSIONS = new LinkedHashSet<>(List.of("txt", "md", "csv"));
+
     private final Socket socket;
     private final String docsDir;
 
@@ -16,67 +22,71 @@ public class ClientHandler implements Runnable {
     @Override
     public void run() {
         try (
-                BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
-                PrintWriter writer = new PrintWriter(
-                        new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true)) {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+            PrintWriter writer = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true)
+        ) {
             String request = reader.readLine();
 
-            // 1. Se il client si disconnette senza inviare nulla, termina silenziosamente
             if (request == null) {
                 return;
             }
 
-            // 2. Controllo richiesta vuota (solo spazi o Invio)
             if (request.trim().isEmpty()) {
                 sendError(writer, "ERR SYNTAX");
                 return;
             }
 
-            // Separa usando uno o più spazi
             String[] tokens = request.trim().split("\\s+");
 
-            // 3. Controllo comando (deve essere esattamente "LEGGI" in maiuscolo)
             if (!tokens[0].equals("LEGGI")) {
                 sendError(writer, "ERR UNKNOWNCMD");
                 return;
             }
 
-            // 4. Controllo numero di argomenti e validità del nome file
-            if (tokens.length != 2 || !isValidFilename(tokens[1])) {
+            if (tokens.length != 2 || !isValidBaseName(tokens[1])) {
                 sendError(writer, "ERR SYNTAX");
                 return;
             }
 
-            String filename = tokens[1];
-            File file = new File(docsDir, filename);
+            String baseName = tokens[1];
+            File foundFile = null;
+            String foundExt = null;
 
-            // 5. Controllo presenza del file
-            if (!file.isFile()) {
+            // L'iterazione su LinkedHashSet rispetta esattamente l'ordine txt, md, csv
+            for (String ext : EXTENSIONS) {
+                File candidate = new File(docsDir, baseName + "." + ext);
+                if (candidate.isFile()) {
+                    foundFile = candidate;
+                    foundExt = ext;
+                    break;
+                }
+            }
+
+            if (foundFile == null) {
                 sendError(writer, "ERR NOTFOUND");
                 return;
             }
 
-            // 6. Apertura in lettura e invio del contenuto
             boolean headerSent = false;
             try (BufferedReader fileReader = new BufferedReader(
-                    new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8))) {
+                    new InputStreamReader(new FileInputStream(foundFile), StandardCharsets.UTF_8))) {
 
                 writer.println("OK FILE");
-                writer.println(); // Riga vuota di separazione
+                writer.println("TYPE " + foundExt);
+                writer.println();
                 headerSent = true;
 
                 String line;
                 while ((line = fileReader.readLine()) != null) {
                     writer.println(line);
                 }
-                System.out.println("File inviato a " + socket.getRemoteSocketAddress() + ": " + filename);
+                System.out.println("File inviato a " + socket.getRemoteSocketAddress() + ": " + foundFile.getName());
 
             } catch (IOException e) {
                 if (!headerSent) {
                     sendError(writer, "ERR READ");
                 } else {
-                    System.err.println("Errore durante la lettura di " + filename + ": " + e.getMessage());
+                    System.err.println("Errore durante la lettura di " + foundFile.getName() + ": " + e.getMessage());
                 }
             }
 
@@ -90,16 +100,15 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    private boolean isValidFilename(String filename) {
-        if (filename == null || !filename.endsWith(".txt") || filename.equals(".txt")) {
+    private boolean isValidBaseName(String name) {
+        if (name == null || name.isEmpty()) {
             return false;
         }
-        // Vieta barre, backslash e sequenze di risalita (..)
-        return !filename.contains("/") && !filename.contains("\\") && !filename.contains("..");
+        return !name.contains(".") && !name.contains("/") && !name.contains("\\");
     }
 
     private void sendError(PrintWriter writer, String errorCode) {
         writer.println(errorCode);
-        writer.println(); // Riga vuota richiesta dal protocollo anche in caso di errore
+        writer.println();
     }
 }
