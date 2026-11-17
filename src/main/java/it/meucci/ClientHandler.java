@@ -25,7 +25,7 @@ public class ClientHandler implements Runnable {
             }
 
             // Parsing della richiesta (es. "LEGGI avvisi.txt", gestendo spazi multipli)
-            String[] tokens = request.trim().split("\\s+");
+            String[] tokens = request.trim().split(" ");
             if (tokens.length < 2 || !tokens[0].equalsIgnoreCase("LEGGI")) {
                 sendError(writer, "ERR BAD_REQUEST Comando non valido o formato errato");
                 return;
