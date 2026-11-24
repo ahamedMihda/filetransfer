@@ -4,11 +4,17 @@ import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 
 public class ClientHandler implements Runnable {
     private static final String PROTOCOL_PREFIX = "HTTP/";
     private static final String PROTOCOL_VERSION = "HTTP/1.0";
+    private static final DateTimeFormatter FORMATO_DATA = DateTimeFormatter.RFC_1123_DATE_TIME;
     private static final Map<String, String> MIME_TYPES = new LinkedHashMap<>();
 
     static {
@@ -171,8 +177,27 @@ public class ClientHandler implements Runnable {
 
             try {
                 byte[] dati = Files.readAllBytes(foundFile.toPath());
+                String ultimaModifica = dataUltimaModifica(foundFile);
+
+                // Se il client ha una copia NON più vecchia del file, gli basta un 304
+                String ifModifiedSince = headers.get("if-modified-since");
+                if (ifModifiedSince != null) {
+                    try {
+                        Instant richiesta = ZonedDateTime.parse(ifModifiedSince, FORMATO_DATA).toInstant();
+                        boolean nonModificato = foundFile.lastModified() / 1000 <= richiesta.getEpochSecond();
+                        if (nonModificato) {
+                            sendResponse(writer, 304, "Not Modified", foundMimeType, new byte[0], false,
+                                    Map.of("Last-Modified", ultimaModifica));
+                            return;
+                        }
+                    } catch (DateTimeParseException ignored) {
+                        // Data non riconosciuta: l'intestazione viene semplicemente ignorata
+                    }
+                }
+
                 // HEAD invia solo le intestazioni: Content-Length dice quanto sarebbe lungo il contenuto
-                sendResponse(writer, 200, "OK", foundMimeType, dati, !richiestaHead);
+                sendResponse(writer, 200, "OK", foundMimeType, dati, !richiestaHead,
+                        Map.of("Last-Modified", ultimaModifica));
             } catch (IOException e) {
                 sendError(writer, 500, "Internal Server Error", "Errore interno durante la lettura del file.\n", richiestaHead);
                 System.err.println("Errore durante la lettura di " + foundFile.getName() + ": " + e.getMessage());
@@ -351,18 +376,30 @@ public class ClientHandler implements Runnable {
 
     private void sendResponse(PrintWriter writer, int statusCode, String statusText, String contentType,
                               byte[] bodyBytes, boolean inviaCorpo) {
+        sendResponse(writer, statusCode, statusText, contentType, bodyBytes, inviaCorpo, Collections.emptyMap());
+    }
+
+    private void sendResponse(PrintWriter writer, int statusCode, String statusText, String contentType,
+                              byte[] bodyBytes, boolean inviaCorpo, Map<String, String> intestazioniExtra) {
         String body = new String(bodyBytes, StandardCharsets.UTF_8);
 
         System.out.println("Risposta: " + PROTOCOL_VERSION + " " + statusCode + " " + statusText);
         inviaRiga(writer, PROTOCOL_VERSION + " " + statusCode + " " + statusText);
         inviaRiga(writer, "Content-Type: " + contentType);
         inviaRiga(writer, "Content-Length: " + bodyBytes.length);
+        for (Map.Entry<String, String> intestazione : intestazioniExtra.entrySet()) {
+            inviaRiga(writer, intestazione.getKey() + ": " + intestazione.getValue());
+        }
         inviaRiga(writer, "Connection: close");
         inviaRiga(writer, "");
         if (inviaCorpo) {
             writer.print(body);
         }
         writer.flush();
+    }
+
+    private String dataUltimaModifica(File file) {
+        return FORMATO_DATA.format(Instant.ofEpochMilli(file.lastModified()).atZone(ZoneOffset.UTC));
     }
 
     // Righe di stato e intestazioni terminano con CRLF, come nel protocollo del browser
