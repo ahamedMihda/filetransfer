@@ -116,9 +116,14 @@ public class ClientHandler implements Runnable {
                 return;
             }
 
-            String baseName = resource.substring(1);
-            if (!isValidBaseName(baseName)) {
-                sendError(writer, 400, "Bad Request", "Nome della risorsa non valido.\n");
+            if (!isValidResource(resource)) {
+                sendError(writer, 400, "Bad Request", "Percorso della risorsa non valido.\n");
+                return;
+            }
+
+            File percorso = percorsoRisorsa(resource);
+            if (percorso.isDirectory()) {
+                sendError(writer, 404, "Not Found", "La risorsa \"" + resource + "\" indica una cartella.\n");
                 return;
             }
 
@@ -130,7 +135,7 @@ public class ClientHandler implements Runnable {
             String foundMimeType = null;
 
             for (String ext : candidateExtensions) {
-                File candidate = new File(docsDir, baseName + "." + ext);
+                File candidate = fileConEstensione(percorso, ext);
                 if (candidate.isFile()) {
                     foundFile = candidate;
                     foundMimeType = MIME_TYPES.get(ext);
@@ -142,7 +147,7 @@ public class ClientHandler implements Runnable {
                 // Verifica se il file esiste con un altro tipo supportato per distinguere 406 da 404
                 boolean existsWithOtherType = false;
                 for (String ext : MIME_TYPES.keySet()) {
-                    if (new File(docsDir, baseName + "." + ext).isFile()) {
+                    if (fileConEstensione(percorso, ext).isFile()) {
                         existsWithOtherType = true;
                         break;
                     }
@@ -201,11 +206,37 @@ public class ClientHandler implements Runnable {
         return orderedExtensions;
     }
 
-    private boolean isValidBaseName(String name) {
-        if (name == null || name.isEmpty()) {
+    // Ogni segmento dopo la barra iniziale deve essere non vuoto e senza '.' o '\'
+    private boolean isValidResource(String resource) {
+        if (!resource.startsWith("/")) {
             return false;
         }
-        return !name.contains(".") && !name.contains("/") && !name.contains("\\");
+        String[] segmenti = resource.split("/", -1);
+        if (segmenti.length < 2) {
+            return false;
+        }
+        for (int i = 1; i < segmenti.length; i++) {
+            String segmento = segmenti[i];
+            if (segmento.isEmpty() || segmento.contains(".") || segmento.contains("\\")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Costruisce il percorso della risorsa dentro la cartella documenti
+    private File percorsoRisorsa(String resource) {
+        File percorso = new File(docsDir);
+        for (String segmento : resource.split("/", -1)) {
+            if (!segmento.isEmpty()) {
+                percorso = new File(percorso, segmento);
+            }
+        }
+        return percorso;
+    }
+
+    private File fileConEstensione(File percorso, String estensione) {
+        return new File(percorso.getParentFile(), percorso.getName() + "." + estensione);
     }
 
     private void sendError(PrintWriter writer, int statusCode, String statusText, String message) {
