@@ -21,6 +21,7 @@ public class ClientHandler implements Runnable {
         MIME_TYPES.put("txt", "text/plain; charset=utf-8");
         MIME_TYPES.put("md", "text/markdown; charset=utf-8");
         MIME_TYPES.put("csv", "text/csv; charset=utf-8");
+        MIME_TYPES.put("html", "text/html; charset=utf-8");
     }
 
     private final Socket socket;
@@ -68,7 +69,7 @@ public class ClientHandler implements Runnable {
                 if (colonIndex <= 0) {
                     invalidHeaderSyntax = true;
                 } else {
-                    String name = headerLine.substring(0, colonIndex).trim().toLowerCase();
+                    String name = headerLine.substring(0, colonIndex).trim().toLowerCase(Locale.ROOT);
                     String value = headerLine.substring(colonIndex + 1).trim();
                     headers.put(name, value);
                 }
@@ -94,7 +95,7 @@ public class ClientHandler implements Runnable {
             String[] tokens = requestLine.trim().split("\\s+");
             boolean richiestaHead = tokens[0].equals("HEAD");
             if (tokens.length != 3) {
-                sendError(writer, 400, "Bad Request", "La richiesta deve avere tre parti: COMANDO /risorsa HTTP/1.0\n", richiestaHead);
+                sendError(writer, 400, "Bad Request", "La richiesta deve avere tre parti: COMANDO /risorsa HTTP/1.0\n", !richiestaHead);
                 return;
             }
 
@@ -103,28 +104,28 @@ public class ClientHandler implements Runnable {
             String version = tokens[2];
 
             if (!resource.startsWith("/")) {
-                sendError(writer, 400, "Bad Request", "La risorsa deve iniziare con '/'.\n", richiestaHead);
+                sendError(writer, 400, "Bad Request", "La risorsa deve iniziare con '/'.\n", !richiestaHead);
                 return;
             }
 
             if (!version.startsWith(PROTOCOL_PREFIX)) {
-                sendError(writer, 400, "Bad Request", "Versione del protocollo non valida.\n", richiestaHead);
+                sendError(writer, 400, "Bad Request", "Versione del protocollo non valida.\n", !richiestaHead);
                 return;
             }
 
             // Browser e curl usano 1.0 o 1.1: rispondiamo sempre con 1.0
             if (!version.equals("HTTP/1.0") && !version.equals("HTTP/1.1")) {
-                sendError(writer, 505, "Version Not Supported", "Versione non supportata. Usare HTTP/1.0 o HTTP/1.1.\n", richiestaHead);
+                sendError(writer, 505, "Version Not Supported", "Versione non supportata. Usare HTTP/1.0 o HTTP/1.1.\n", !richiestaHead);
                 return;
             }
 
             if (!command.equals("GET") && !command.equals("HEAD") && !command.equals("PUT")) {
-                sendError(writer, 501, "Not Implemented", "Comando \"" + command + "\" non supportato.\n", richiestaHead);
+                sendError(writer, 501, "Not Implemented", "Comando \"" + command + "\" non supportato.\n", !richiestaHead);
                 return;
             }
 
             if (!isValidResource(resource)) {
-                sendError(writer, 400, "Bad Request", "Percorso della risorsa non valido.\n", richiestaHead);
+                sendError(writer, 400, "Bad Request", "Percorso della risorsa non valido.\n", !richiestaHead);
                 return;
             }
 
@@ -136,8 +137,24 @@ public class ClientHandler implements Runnable {
                 return;
             }
 
+            // Una cartella viene presentata come pagina HTML da sfogliare
             if (percorso.isDirectory()) {
-                sendError(writer, 404, "Not Found", "La risorsa \"" + resource + "\" indica una cartella.\n", richiestaHead);
+                File index = new File(percorso, "index.html");
+                byte[] pagina;
+                Map<String, String> intestazioniExtra = Collections.emptyMap();
+                if (index.isFile()) {
+                    try {
+                        pagina = Files.readAllBytes(index.toPath());
+                    } catch (IOException e) {
+                        sendError(writer, 500, "Internal Server Error", "Errore interno durante la lettura dell'indice.\n", !richiestaHead);
+                        System.err.println("Errore durante la lettura di " + index.getName() + ": " + e.getMessage());
+                        return;
+                    }
+                    intestazioniExtra = Map.of("Last-Modified", dataUltimaModifica(index));
+                } else {
+                    pagina = costruisciIndice(percorso, resource).getBytes(StandardCharsets.UTF_8);
+                }
+                sendResponse(writer, 200, "OK", "text/html; charset=utf-8", pagina, !richiestaHead, intestazioniExtra);
                 return;
             }
 
@@ -168,9 +185,9 @@ public class ClientHandler implements Runnable {
                 }
 
                 if (existsWithOtherType) {
-                    sendError(writer, 406, "Not Acceptable", "Nessun formato disponibile corrisponde all'intestazione Accept.\n", richiestaHead);
+                    sendError(writer, 406, "Not Acceptable", "Nessun formato disponibile corrisponde all'intestazione Accept.\n", !richiestaHead);
                 } else {
-                    sendError(writer, 404, "Not Found", "La risorsa \"" + resource + "\" non esiste.\n", richiestaHead);
+                    sendError(writer, 404, "Not Found", "La risorsa \"" + resource + "\" non esiste.\n", !richiestaHead);
                 }
                 return;
             }
@@ -199,7 +216,7 @@ public class ClientHandler implements Runnable {
                 sendResponse(writer, 200, "OK", foundMimeType, dati, !richiestaHead,
                         Map.of("Last-Modified", ultimaModifica));
             } catch (IOException e) {
-                sendError(writer, 500, "Internal Server Error", "Errore interno durante la lettura del file.\n", richiestaHead);
+                sendError(writer, 500, "Internal Server Error", "Errore interno durante la lettura del file.\n", !richiestaHead);
                 System.err.println("Errore durante la lettura di " + foundFile.getName() + ": " + e.getMessage());
             }
 
@@ -224,14 +241,14 @@ public class ClientHandler implements Runnable {
 
         for (String rawType : acceptedTypes) {
             // Considera solo la parte prima di ';' e ignora maiuscole/spazi
-            String cleanType = rawType.split(";")[0].trim().toLowerCase();
+            String cleanType = rawType.split(";")[0].trim().toLowerCase(Locale.ROOT);
 
             if (cleanType.equals("*/*")) {
                 return new ArrayList<>(MIME_TYPES.keySet());
             }
 
             for (Map.Entry<String, String> entry : MIME_TYPES.entrySet()) {
-                String supportedMime = entry.getValue().split(";")[0].trim().toLowerCase();
+                String supportedMime = entry.getValue().split(";")[0].trim().toLowerCase(Locale.ROOT);
                 if (supportedMime.equals(cleanType) && !orderedExtensions.contains(entry.getKey())) {
                     orderedExtensions.add(entry.getKey());
                 }
@@ -244,6 +261,9 @@ public class ClientHandler implements Runnable {
     private boolean isValidResource(String resource) {
         if (!resource.startsWith("/")) {
             return false;
+        }
+        if (resource.equals("/")) {
+            return true; // la radice dell'archivio è una cartella valida
         }
         String[] segmenti = resource.split("/", -1);
         if (segmenti.length < 2) {
@@ -273,11 +293,65 @@ public class ClientHandler implements Runnable {
         return new File(percorso.getParentFile(), percorso.getName() + "." + estensione);
     }
 
+    // Pagina di indice: prima le sottocartelle, poi i file con un'estensione conosciuta
+    private String costruisciIndice(File cartella, String percorso) {
+        String titolo = "Archivio " + percorso;
+        StringBuilder pagina = new StringBuilder();
+        pagina.append("<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"><title>")
+              .append(escapeHtml(titolo)).append("</title></head>\n<body>\n  <h1>")
+              .append(escapeHtml(titolo)).append("</h1>\n  <ul>\n");
+
+        File[] elementi = cartella.listFiles(); // può restituire null
+        if (elementi == null) {
+            elementi = new File[0];
+        }
+        Arrays.sort(elementi);
+
+        for (File elemento : elementi) {
+            if (elemento.isDirectory()) {
+                String nome = elemento.getName();
+                pagina.append("    <li><a href=\"").append(escapeHtml(hrefFiglio(percorso, nome)))
+                      .append("\">").append(escapeHtml(nome)).append("/</a></li>\n");
+            }
+        }
+
+        for (File elemento : elementi) {
+            if (!elemento.isFile()) {
+                continue;
+            }
+            String nome = elemento.getName();
+            int punto = nome.lastIndexOf('.');
+            if (punto < 0) {
+                continue;
+            }
+            String estensione = nome.substring(punto + 1).toLowerCase(Locale.ROOT);
+            if (!MIME_TYPES.containsKey(estensione)) {
+                continue; // per esempio note.log non viene mostrato
+            }
+            String nomeSenzaEstensione = nome.substring(0, punto);
+            pagina.append("    <li><a href=\"").append(escapeHtml(hrefFiglio(percorso, nomeSenzaEstensione)))
+                  .append("\">").append(escapeHtml(nomeSenzaEstensione)).append("</a> (")
+                  .append(estensione).append(", ").append(elemento.length()).append(" byte)</li>\n");
+        }
+
+        pagina.append("  </ul>\n  <p><a href=\"/\">Torna all'inizio</a></p>\n</body>\n</html>\n");
+        return pagina.toString();
+    }
+
+    private String hrefFiglio(String percorso, String nome) {
+        return percorso.equals("/") ? "/" + nome : percorso + "/" + nome;
+    }
+
+    private String escapeHtml(String testo) {
+        return testo.replace("&", "&amp;").replace("<", "&lt;")
+                    .replace(">", "&gt;").replace("\"", "&quot;");
+    }
+
     // L'estensione del file salvato si ricava dal Content-Type, non dal nome richiesto
     private String estensioneDaContentType(String contentType) {
-        String tipo = contentType.split(";")[0].trim().toLowerCase();
+        String tipo = contentType.split(";")[0].trim().toLowerCase(Locale.ROOT);
         for (Map.Entry<String, String> entry : MIME_TYPES.entrySet()) {
-            if (entry.getValue().split(";")[0].trim().toLowerCase().equals(tipo)) {
+            if (entry.getValue().split(";")[0].trim().toLowerCase(Locale.ROOT).equals(tipo)) {
                 return entry.getKey();
             }
         }
@@ -286,6 +360,11 @@ public class ClientHandler implements Runnable {
 
     private void gestisciPut(BufferedReader reader, PrintWriter writer, Map<String, String> headers,
                              File percorso, String resource) throws IOException {
+        if (resource.equals("/")) {
+            sendError(writer, 400, "Bad Request", "La risorsa deve indicare un nome di file.\n");
+            return;
+        }
+
         String lunghezzaHeader = headers.get("content-length");
         if (lunghezzaHeader == null) {
             sendError(writer, 411, "Length Required", "Manca l'intestazione Content-Length.\n");
@@ -323,7 +402,7 @@ public class ClientHandler implements Runnable {
 
         // curl può attendere il via libera prima di inviare il corpo
         String expect = headers.get("expect");
-        if (expect != null && expect.toLowerCase().contains("100-continue")) {
+        if (expect != null && expect.toLowerCase(Locale.ROOT).contains("100-continue")) {
             inviaRiga(writer, PROTOCOL_VERSION + " 100 Continue");
             inviaRiga(writer, "");
             writer.flush();
