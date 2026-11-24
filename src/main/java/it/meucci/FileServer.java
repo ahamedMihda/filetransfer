@@ -10,7 +10,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class FileServer {
-    private static final int PORT = 3000;
+    private static final int PORT = 3001;
     private static final Path DOCS_PATH = Paths.get("documenti");
 
     public static void main(String[] args) {
