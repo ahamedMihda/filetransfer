@@ -7,8 +7,8 @@ import java.nio.file.Files;
 import java.util.*;
 
 public class ClientHandler implements Runnable {
-    private static final String PROTOCOL_PREFIX = "ARCH/";
-    private static final String PROTOCOL_VERSION = "ARCH/1.0";
+    private static final String PROTOCOL_PREFIX = "HTTP/";
+    private static final String PROTOCOL_VERSION = "HTTP/1.0";
     private static final Map<String, String> MIME_TYPES = new LinkedHashMap<>();
 
     static {
@@ -87,7 +87,7 @@ public class ClientHandler implements Runnable {
 
             String[] tokens = requestLine.trim().split("\\s+");
             if (tokens.length != 3) {
-                sendError(writer, 400, "Bad Request", "La richiesta deve avere tre parti: COMANDO /risorsa ARCH/1.0\n");
+                sendError(writer, 400, "Bad Request", "La richiesta deve avere tre parti: COMANDO /risorsa HTTP/1.0\n");
                 return;
             }
 
@@ -105,12 +105,13 @@ public class ClientHandler implements Runnable {
                 return;
             }
 
-            if (!version.equals(PROTOCOL_VERSION)) {
-                sendError(writer, 505, "Version Not Supported", "Versione non supportata. Usare ARCH/1.0.\n");
+            // Browser e curl usano 1.0 o 1.1: rispondiamo sempre con 1.0
+            if (!version.equals("HTTP/1.0") && !version.equals("HTTP/1.1")) {
+                sendError(writer, 505, "Version Not Supported", "Versione non supportata. Usare HTTP/1.0 o HTTP/1.1.\n");
                 return;
             }
 
-            if (!command.equals("LEGGI")) {
+            if (!command.equals("GET")) {
                 sendError(writer, 501, "Not Implemented", "Comando \"" + command + "\" non supportato.\n");
                 return;
             }
@@ -216,11 +217,17 @@ public class ClientHandler implements Runnable {
         String body = new String(bodyBytes, StandardCharsets.UTF_8);
 
         System.out.println("Risposta: " + PROTOCOL_VERSION + " " + statusCode + " " + statusText);
-        writer.println(PROTOCOL_VERSION + " " + statusCode + " " + statusText);
-        writer.println("Content-Type: " + contentType);
-        writer.println("Content-Length: " + bodyBytes.length);
-        writer.println();
+        inviaRiga(writer, PROTOCOL_VERSION + " " + statusCode + " " + statusText);
+        inviaRiga(writer, "Content-Type: " + contentType);
+        inviaRiga(writer, "Content-Length: " + bodyBytes.length);
+        inviaRiga(writer, "Connection: close");
+        inviaRiga(writer, "");
         writer.print(body);
         writer.flush();
+    }
+
+    // Righe di stato e intestazioni terminano con CRLF, come nel protocollo del browser
+    private void inviaRiga(PrintWriter writer, String testo) {
+        writer.print(testo + "\r\n");
     }
 }
